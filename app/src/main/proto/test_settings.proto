@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option java_package = "com.yae.torrenthelper";
+option java_multiple_files = true;
+
+message TestSettings {
+  string backendURL = 1;
+  string backendUser = 2;
+  string backendPassword = 3;
+  string saveFolder = 4;
+  string unpackFolder = 5;
+}
