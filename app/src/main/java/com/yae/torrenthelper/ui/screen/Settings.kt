@@ -3,7 +3,7 @@ package com.yae.torrenthelper.ui.screen
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -23,16 +23,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yae.torrenthelper.TestSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import java.time.format.TextStyle
 import javax.inject.Inject
 
-data class TestSettingsState(val backendURL:String, val backendUser:String, val backendPasword:String) {
+data class TestSettingsState(
+    val backendURL:String, val backendUser:String, val backendPassword:String,
+    val saveFolder:String, val unpackFolder:String) {
     companion object {
         val Default:TestSettingsState = TestSettings.getDefaultInstance().run {
-            TestSettingsState(backendURL, backendUser, backendPassword)
+            TestSettingsState(backendURL, backendUser, backendPassword, saveFolder, unpackFolder)
         }
     }
 }
@@ -42,14 +42,16 @@ class SettingsScreenViewModel
     @Inject constructor(private val testSettingsDataStore:DataStore<TestSettings>) :ViewModel() {
     private val data = testSettingsDataStore.data
     val state = data.map { settings->TestSettingsState(settings.backendURL, settings.backendUser,
-        settings.backendPassword) }
+        settings.backendPassword, settings.saveFolder, settings.unpackFolder) }
 
     fun saveSettings(settings:TestSettingsState) {
         viewModelScope.launch {
             testSettingsDataStore.updateData {
                 it.toBuilder().setBackendURL(settings.backendURL)
                     .setBackendUser(settings.backendUser)
-                    .setBackendPassword(settings.backendPasword)
+                    .setBackendPassword(settings.backendPassword)
+                    .setSaveFolder(settings.saveFolder)
+                    .setUnpackFolder(settings.unpackFolder)
                     .build()
             }
         }
@@ -68,30 +70,52 @@ fun SettingsScreen(vm:SettingsScreenViewModel) {
         mutableStateOf(state.backendUser)
     }
 
-    var backendPasword by remember {
-        mutableStateOf(state.backendPasword)
+    var backendPassword by remember {
+        mutableStateOf(state.backendPassword)
+    }
+
+    var saveFolder by remember {
+        mutableStateOf(state.saveFolder)
+    }
+
+    var unpackFolder by remember {
+        mutableStateOf(state.unpackFolder)
     }
     LaunchedEffect(key1 = state) {
         backendUrl = state.backendURL
         backendUser = state.backendUser
-        backendPasword = state.backendPasword
+        backendPassword = state.backendPassword
+        saveFolder = state.saveFolder
+        unpackFolder = state.unpackFolder
     }
+
     Column {
         Text(text = "Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 5.dp))
-        Divider()
+        HorizontalDivider()
         Text(text = "Backend", fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
             modifier=Modifier.padding(vertical = 5.dp))
-        Divider()
+        HorizontalDivider()
 
         TextField(value = backendUrl, textStyle = androidx.compose.ui.text.TextStyle(
             fontSize = 12.sp
         ),
             onValueChange = {backendUrl=it}, label={Text(text = "Url")})
-        TextField(value = backendUser, onValueChange = {backendUser=it})
-        TextField(value = backendPasword, onValueChange = {backendPasword=it}, visualTransformation = PasswordVisualTransformation())
-        Divider()
-        Button(onClick = { vm.saveSettings(TestSettingsState(backendUrl, backendUser, backendPasword)) }) {
+        TextField(value = backendUser,
+            onValueChange = {backendUser=it},
+            label = { Text(text="Username") })
+        TextField(value = backendPassword, onValueChange = {backendPassword=it},
+            visualTransformation = PasswordVisualTransformation(),
+            label = {Text(text="Password")})
+        HorizontalDivider()
+        TextField(value = saveFolder, onValueChange = {saveFolder = it},
+            label = {Text(text="Save folder")})
+        TextField(value = unpackFolder, onValueChange = {unpackFolder = it},
+            label = {Text(text="Unpack folder")})
+
+        HorizontalDivider()
+        Button(onClick = { vm.saveSettings(TestSettingsState(backendUrl, backendUser, backendPassword,
+            saveFolder, unpackFolder)) }) {
             Text(text = "Save")
         }
     }
