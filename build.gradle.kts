@@ -5,4 +5,5 @@ plugins {
     alias(libs.plugins.hiltPlugin) apply false
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.kotlinKapt) apply false
+    alias(libs.plugins.compose.compiler) apply false
 }

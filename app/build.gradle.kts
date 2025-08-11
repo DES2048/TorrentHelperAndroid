@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.hiltPlugin)
     alias(libs.plugins.protobuf)
     alias(libs.plugins.kotlinKapt)
+    alias(libs.plugins.compose.compiler)
 }
 protobuf {
     protoc {
@@ -28,7 +29,7 @@ protobuf {
 }
 android {
     namespace = "com.yae.torrenthelper"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.yae.torrenthelper"
@@ -70,6 +71,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    composeCompiler {
+        reportsDestination = layout.buildDirectory.dir("compose_compiler")
+        stabilityConfigurationFile = rootProject.layout.projectDirectory.file("stability_config.conf")
+    }
 }
 
 dependencies {
@@ -93,6 +98,9 @@ dependencies {
     implementation(libs.converter.gson)
     implementation(libs.accompanist.permissions)
     implementation(libs.commons.compress)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    testImplementation(libs.kotlinx.coroutines.test)
     kapt(libs.com.google.dagger.hilt.compiler)
 
     testImplementation(libs.junit)

@@ -4,9 +4,13 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.dataStoreFile
+import androidx.work.WorkManager
 import com.yae.torrenthelper.data.TestSettingsSerializer
 import com.yae.torrenthelper.network.BasicAuthInterceptor
 import com.yae.torrenthelper.network.TorrentHelperApiService
+import com.yae.torrenthelper.torrents.TorrentsService
+import com.yae.torrenthelper.torrents.TorrentsServiceImpl
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,6 +40,12 @@ object HiltAppModule {
         )
     }
 
+    @Singleton
+    @Provides
+    fun provideWorkManager(@ApplicationContext context: Context): WorkManager {
+        return WorkManager.getInstance(context)
+    }
+
     /*
     @Singleton
     @Provides
@@ -55,4 +65,11 @@ object HiltAppModule {
 
         return retrofit.create(TorrentHelperApiService::class.java)
     } */
+}
+@InstallIn(SingletonComponent::class)
+@Module
+abstract class HiltBindModule {
+    @Singleton
+    @Binds
+    abstract fun bindTorrentsService(service: TorrentsServiceImpl): TorrentsService
 }

@@ -24,11 +24,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.yae.torrenthelper.data.TorrentInfo
+import com.yae.torrenthelper.torrents.TorrentActionMessage
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -69,26 +72,27 @@ fun HomeScreen(vm:HomeViewModel= hiltViewModel()) {
     if (openTorrentActionDialog) {
         TorrentActionDialog({
             openTorrentActionDialog = false
-            vm.performTorrentActions(selectedTorrentId, it)
-
-                            }, {
-            openTorrentActionDialog = false
-
-        })
+            vm.performTorrentActions2(selectedTorrentId, it) },
+            { openTorrentActionDialog = false })
     }
 }
 
 @Composable
 fun TorrentActionProgressDialog(progressState: TorrentActionMessage, onCancel:()->Unit) {
     Dialog(
-        onDismissRequest = onCancel
+        onDismissRequest = onCancel,
+        properties = DialogProperties(
+            dismissOnClickOutside = false, dismissOnBackPress = false,
+        )
     ) {
         var buttonText by remember {
             mutableStateOf("Cancel")
         }
 
         Card(modifier = Modifier.padding(5.dp)) {
-            Text("Performing actions", fontWeight = FontWeight.Bold)
+            Text("Performing actions", fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth())
             HorizontalDivider()
             when (progressState) {
                 is TorrentActionMessage.Failed ->

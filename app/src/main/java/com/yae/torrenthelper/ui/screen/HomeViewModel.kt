@@ -7,39 +7,43 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.datastore.core.DataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.ArrayCreatingInputMerger
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.yae.torrenthelper.TestSettings
 import com.yae.torrenthelper.data.TorrentInfo
-import com.yae.torrenthelper.network.DownloadState
-import com.yae.torrenthelper.network.TorrentClientSettings
-import com.yae.torrenthelper.network.TorrentHelperApiService
-import com.yae.torrenthelper.network.TorrentHelperApiServiceProvider
-import com.yae.torrenthelper.network.download
+import com.yae.torrenthelper.torrents.TorrentActionMessage
+import com.yae.torrenthelper.torrents.TorrentsService
+import com.yae.torrenthelper.torrents.toTorrentActionMessage
 import com.yae.torrenthelper.utils.UnpackState
-import com.yae.torrenthelper.utils.humanizeBytes
 import com.yae.torrenthelper.utils.unpackTarWithProgress
+import com.yae.torrenthelper.work.TorrentActionsWorker
+import com.yae.torrenthelper.work.toData
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import javax.inject.Inject
 import kotlin.io.path.Path
 
+const val LOGCAT_TAG = "home vm"
+
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val settings: DataStore<TestSettings>
+    private val settings: DataStore<TestSettings>,
+    private val torrentsService: TorrentsService,
+    private val workManager: WorkManager
 ): ViewModel() {
     // torrents list
     private var _torrents = mutableStateListOf<TorrentInfo>()
@@ -60,60 +64,39 @@ class HomeViewModel @Inject constructor(
     private var downloadJob:Job? = null
     private var torrentActionJob:Job? = null
 
-    private suspend fun checkSettings() {
-        val data = settings.data.first()
-        if (data.backendURL.isEmpty()) {
-            throw IllegalArgumentException("You must provide valid backend url!")
-        }
-    }
-    private suspend fun getApiClient(): TorrentHelperApiService {
-        val sets = settings.data.first()
-        return TorrentHelperApiServiceProvider.getClient(
-            TorrentClientSettings(sets.backendURL, sets.backendUser, sets.backendPassword)
-        )
+    private fun makeTarFilePath(torrInfo:TorrentInfo, saveFolder:String):String {
+        return saveFolder + "/${torrInfo.name}.tar"
     }
     fun listTorrents() {
         viewModelScope.launch {
             try {
                 _error.value = ""
                 _loading.value = true
-                checkSettings()
-                getApiClient().listTorrents().also { data ->
+                torrentsService.listTorrents().also { data ->
                     _torrents = data.toMutableStateList()
                 }
 
             } catch (e:Throwable) {
-                _error.value = e.message ?: ""
+                _error.value = ("Failed to load torrents: " + e.message) ?: ""
             } finally {
                 _loading.value = false
             }
         }
     }
-    private fun makeTarFilePath(torrInfo:TorrentInfo, saveFolder:String):String {
-        return saveFolder + "/${torrInfo.name}.tar"
-    }
-    private suspend fun internalDownloadTar(tarId: String): Flow<DownloadState> {
-              val downloadFileName = _torrents.first { it.id == tarId }.name
-              // open file
-              val filePath = settings.data.first().saveFolder + "/${downloadFileName}.tar"
-              // overwrite if exists
-              val file = withContext(Dispatchers.IO) {
-                  FileOutputStream(filePath, false)
-              }
-              return getApiClient().getTar(tarId)
-                      .download(file)
-                      .flowOn(Dispatchers.IO).distinctUntilChanged()
-    }
+
     fun downloadSingleTar(tarId: String) {
-        downloadJob = viewModelScope.launch {
-            downloadTar(tarId)
-            if (_torrentActionState.value is TorrentActionMessage.Finished) {
-                _torrentActionState.value = null
+        val workRequest = OneTimeWorkRequestBuilder<TorrentActionsWorker>().build()
+        workManager.enqueue(workRequest)
+        viewModelScope.launch {
+            workManager.getWorkInfoByIdFlow(workRequest.id).collect { state ->
+                _error.value = state.toString()
             }
         }
     }
     suspend fun downloadTar(tarId: String) {
-                    internalDownloadTar(tarId).map { state ->
+            val torrInfo = _torrents.first { it.id == tarId }
+                    torrentsService.downloadTar(torrInfo, settings.data.first().saveFolder)
+                        .map { state ->
                       state.toTorrentActionMessage()
                     }.collect { msg->
                         _torrentActionState.value = msg
@@ -126,34 +109,82 @@ class HomeViewModel @Inject constructor(
 
     }
 
-    fun cancelSingleDownload() {
-        downloadJob?.cancel("")
-        _torrentActionState.value = null
-    }
-
     fun deleteTar(tarId:String) {
         viewModelScope.launch {
-            getApiClient().deleteTar(tarId)
-            // TODO delete tar info from torrent entry
-            val idx = _torrents.indexOfFirst { elem-> elem.id == tarId }
-            if (idx>=0) {
-                _torrents[idx] = _torrents[idx].copy(tarInfo = null)
+            try {
+                _error.value = ""
+                torrentsService.deleteTar(tarId)
+                val idx = _torrents.indexOfFirst { elem -> elem.id == tarId }
+                if (idx >= 0) {
+                    _torrents[idx] = _torrents[idx].copy(tarInfo = null)
+                }
+            } catch (e: Throwable) {
+                _error.value = "Failed to delete remote tar: ${e.message}"
             }
         }
     }
 
     fun deleteTorrent(torrentId:String) {
         viewModelScope.launch {
-          internalDeleteTorrent(torrentId)
+            try {
+                _error.value = ""
+                internalDeleteTorrent(torrentId)
+            } catch (e: Throwable) {
+                _error.value = "Failed to delete torrent: ${e.message}"
+            }
         }
     }
 
     private suspend fun internalDeleteTorrent(torrentId: String) {
-        getApiClient().deleteTorrent(torrentId)
+        torrentsService.deleteTorrent(torrentId)
         _torrents.removeIf { elem-> elem.id ==torrentId }
     }
 
+    fun performTorrentActions3(torrentId: String, actions: TorrentActions) {
+        _error.value = ""
+        // create work data
+        val workRequest = OneTimeWorkRequestBuilder<TorrentActionsWorker>()
+            .setInputMerger(ArrayCreatingInputMerger::class.java)
+            .setInputData(torrents.first { it.id == torrentId}.toData())
+            .setInputData(actions.toData())
+            .build()
+
+        workManager.enqueue(workRequest)
+        viewModelScope.launch {
+            workManager.getWorkInfoByIdFlow(workRequest.id).collect { state ->
+                _error.value = state.toString()
+                delay(3000L)
+            }
+        }
+
+    }
+    fun performTorrentActions2(torrentId: String, actions:TorrentActions) {
+        _error.value = ""
+        viewModelScope.launch {
+            torrentActionJob = launch {
+                torrentsService.performTorrentActions(
+                    torrents.first { it.id == torrentId },
+                    actions
+                )
+                    .collect { state ->
+                        _torrentActionState.value = state
+                    }
+                if (_torrentActionState.value is TorrentActionMessage.Finished) {
+                    _torrentActionState.value = null
+                }
+            }
+            torrentActionJob!!.join()
+            if (actions.needDeleteTorrent) {
+                _torrents.removeIf { elem ->
+                    elem.id == torrentId
+                }
+            }
+            torrentActionJob = null
+        }
+
+    }
     fun performTorrentActions(torrentId:String, actions:TorrentActions) {
+        _error.value = ""
         torrentActionJob = viewModelScope.launch {
             // proceed download when needed
             if (actions.needDownload) {
@@ -209,26 +240,10 @@ class HomeViewModel @Inject constructor(
     }
 
     fun cancelTorrentActions() {
-        torrentActionJob?.cancel()
-        torrentActionJob = null
-        _torrentActionState.value = null
-    }
-}
-
-sealed class TorrentActionMessage {
-    data class Progress(val message: String, val progress: Float?=null): TorrentActionMessage()
-    data class Finished(val message: String?=null): TorrentActionMessage()
-    data class Failed(val message: String): TorrentActionMessage()
-}
-
-fun DownloadState.toTorrentActionMessage()
-    = when(this) {
-    is DownloadState.Finished -> TorrentActionMessage.Finished()
-    is DownloadState.Failed -> TorrentActionMessage.Failed("Download failed: ${this.error?.message ?: ""}")
-    is DownloadState.Progress -> {
-        val progressStr = humanizeBytes(this.progress)
-        val totalStr = humanizeBytes(this.fileSize)
-        val progressText = "download $progressStr of $totalStr"
-        TorrentActionMessage.Progress(progressText)
+        viewModelScope.launch {
+            torrentActionJob?.cancelAndJoin()
+            torrentActionJob = null
+            _torrentActionState.value = null
+        }
     }
 }
